@@ -154,7 +154,7 @@ func random_PE_content (pe_header uint, data []byte) {
 
     pe_fields := parse_PE_content(pe_header, data)
     get_import_table_offset(data, &pe_fields)
-    // random_import_table(data, &pe_fields)
+    random_import_table(data, &pe_fields)
     random_DOS_Stub(pe_header, data)
 }
 
@@ -193,6 +193,7 @@ func get_import_table_offset (data []byte, pe_fields *PeFields) {
         pointer_to_raw_data := binary.LittleEndian.Uint32(data[section_offset + 20:])
 
         if pe_fields.import_table_rva >= virtual_address && pe_fields.import_table_rva < (virtual_address + size_of_raw_data) {
+            fmt.Println("Pass", pointer_to_raw_data + (pe_fields.import_table_rva - virtual_address))
             pe_fields.import_table_file_offset = pointer_to_raw_data + (pe_fields.import_table_rva - virtual_address)
             break
         }
@@ -202,6 +203,10 @@ func get_import_table_offset (data []byte, pe_fields *PeFields) {
 // This function modify import table
 func random_import_table (data []byte, pe_fields *PeFields) {
     import_offset := pe_fields.import_table_file_offset
+    if import_offset == 0 {
+        return
+    }
+
     for {
         if bytes.Equal(data[import_offset:import_offset + 20], []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}) {
             break
