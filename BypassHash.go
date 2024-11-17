@@ -619,7 +619,6 @@ func random_section_padding (data []byte, section_headers []ELF64SectionHeader) 
         last_byte := section.Offset + section.Size
         next_section := section_headers[i + 1]
         if last_byte < next_section.Offset {
-            fmt.Println("Offset", section.Offset, "Size", section.Size, "Last byte", last_byte, "Next", next_section.Offset)
             for i, char := range get_random_bytes(next_section.Offset - last_byte) {
                 data[last_byte + uint64(i)] = char
             }   
