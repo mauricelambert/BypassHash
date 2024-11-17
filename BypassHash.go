@@ -31,12 +31,12 @@ package main
 
 import (
     "encoding/binary"
-//    "crypto/md5"
     "math/rand"
     "net/http"
     "strings"
     "bytes"
     "time"
+    "sort"
     "fmt"
     "os"
     "io"
@@ -73,6 +73,12 @@ type ELF64SectionHeader struct {
     AddrAlign uint64
     EntSize   uint64
 }
+
+type BySectionOffset []ELF64SectionHeader
+
+func (a BySectionOffset) Len() int           { return len(a) }
+func (a BySectionOffset) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a BySectionOffset) Less(i, j int) bool { return a[i].Offset < a[j].Offset }
 
 type NoteHeader struct {
     Namesz uint32
@@ -188,14 +194,19 @@ func parse_PE_content (pe_header uint, data []byte) PeFields {
 func get_import_table_offset (data []byte, pe_fields *PeFields) {
     for i := uint16(0); i < pe_fields.number_of_sections; i++ {
         section_offset := pe_fields.section_headers_offset + uint32(i * 40)
+        virtual_size := binary.LittleEndian.Uint32(data[section_offset + 8:])
         virtual_address := binary.LittleEndian.Uint32(data[section_offset + 12:])
         size_of_raw_data := binary.LittleEndian.Uint32(data[section_offset + 16:])
         pointer_to_raw_data := binary.LittleEndian.Uint32(data[section_offset + 20:])
 
         if pe_fields.import_table_rva >= virtual_address && pe_fields.import_table_rva < (virtual_address + size_of_raw_data) {
-            fmt.Println("Pass", pointer_to_raw_data + (pe_fields.import_table_rva - virtual_address))
             pe_fields.import_table_file_offset = pointer_to_raw_data + (pe_fields.import_table_rva - virtual_address)
-            break
+        } 
+
+        if (virtual_size < size_of_raw_data) {
+            for i, char := range get_random_bytes(uint64(size_of_raw_data - virtual_size)) {
+                data[pointer_to_raw_data + virtual_size + uint32(i)] = char
+            }
         }
     }
 }
@@ -594,6 +605,26 @@ func random_ELF_content (magic uint, data []byte) {
     string_table := get_string_table(data, elf_header, section_headers)
     random_comment(data, section_headers, string_table)
     random_notes(data, section_headers, string_table)
+    random_section_padding(data, section_headers)
+}
+
+// This function modify section padding
+func random_section_padding (data []byte, section_headers []ELF64SectionHeader) {
+    sort.Sort(BySectionOffset(section_headers))
+    last_index := len(section_headers) - 1
+    for i, section := range section_headers {
+        if i >= last_index || section.Size == 0 || section.Offset == 0 {
+            continue
+        }
+        last_byte := section.Offset + section.Size
+        next_section := section_headers[i + 1]
+        if last_byte < next_section.Offset {
+            fmt.Println("Offset", section.Offset, "Size", section.Size, "Last byte", last_byte, "Next", next_section.Offset)
+            for i, char := range get_random_bytes(next_section.Offset - last_byte) {
+                data[last_byte + uint64(i)] = char
+            }   
+        }
+    }
 }
 
 // This function returns the ELF header
