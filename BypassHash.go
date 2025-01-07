@@ -1,6 +1,6 @@
 /*
     This tool downloads an executable and bypass hash-based virus checks
-    Copyright (C) 2022, 2024  Maurice Lambert
+    Copyright (C) 2022, 2024, 2025  Maurice Lambert
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -41,6 +41,150 @@ import (
     "os"
     "io"
 )
+
+// Define basic types
+type WORD uint16
+type DWORD uint32
+type LONG int32
+type ULONGLONG uint64
+type WCHAR uint16
+type BYTE uint8
+
+// IMAGE_DOS_HEADER structure
+type IMAGE_DOS_HEADER struct {
+    EMagic    WORD   // Magic number
+    ECblp     WORD   // Bytes on last page of file
+    ECp       WORD   // Pages in file
+    ECrlc     WORD   // Relocations
+    ECparhdr  WORD   // Size of header in paragraphs
+    EMinalloc WORD   // Minimum extra paragraphs needed
+    EMaxalloc WORD   // Maximum extra paragraphs needed
+    ESS       WORD   // Initial (relative) SS value
+    ESP       WORD   // Initial SP value
+    ECsum     WORD   // Checksum
+    EIp       WORD   // Initial IP value
+    ECS       WORD   // Initial (relative) CS value
+    ELfarlc   WORD   // File address of relocation table
+    EOvno     WORD   // Overlay number
+    ERes      [4]WORD // Reserved words
+    EOEMID    WORD   // OEM identifier (for e_oeminfo)
+    EOEMInfo  WORD   // OEM information; e_oemid specific
+    ERes2     [10]WORD // Reserved words
+    ELfanew   LONG   // File address of new exe header
+}
+
+// IMAGE_FILE_HEADER structure
+type IMAGE_FILE_HEADER struct {
+    Machine              WORD   // Target machine type
+    NumberOfSections     WORD   // Number of sections
+    TimeDateStamp        DWORD  // Timestamp
+    PointerToSymbolTable DWORD  // Deprecated
+    NumberOfSymbols      DWORD  // Deprecated
+    SizeOfOptionalHeader WORD   // Size of optional header
+    Characteristics      WORD   // File characteristics
+}
+
+// IMAGE_OPTIONAL_HEADER structure
+type IMAGE_OPTIONAL_HEADER struct {
+    Magic                       WORD      // Optional header magic: PE32 or PE32+
+    MajorLinkerVersion          BYTE      // Linker major version
+    MinorLinkerVersion          BYTE      // Linker minor version
+    SizeOfCode                  DWORD     // Size of code (text) section
+    SizeOfInitializedData       DWORD     // Size of initialized data
+    SizeOfUninitializedData     DWORD     // Size of uninitialized data
+    AddressOfEntryPoint         DWORD     // RVA of entry point
+    BaseOfCode                  DWORD     // RVA of base of code
+    ImageBase                   ULONGLONG // Preferred image base
+    SectionAlignment            DWORD     // Section alignment
+    FileAlignment               DWORD     // File alignment
+    MajorOperatingSystemVersion WORD      // Major OS version
+    MinorOperatingSystemVersion WORD      // Minor OS version
+    MajorImageVersion           WORD      // Major image version
+    MinorImageVersion           WORD      // Minor image version
+    MajorSubsystemVersion       WORD      // Major subsystem version
+    MinorSubsystemVersion       WORD      // Minor subsystem version
+    Win32VersionValue           DWORD     // Reserved
+    SizeOfImage                 DWORD     // Size of image
+    SizeOfHeaders               DWORD     // Size of headers
+    CheckSum                    DWORD     // Checksum
+    Subsystem                   WORD      // Subsystem
+    DllCharacteristics          WORD      // DLL characteristics
+    SizeOfStackReserve          ULONGLONG // Size of stack reserve
+    SizeOfStackCommit           ULONGLONG // Size of stack commit
+    SizeOfHeapReserve           ULONGLONG // Size of heap reserve
+    SizeOfHeapCommit            ULONGLONG // Size of heap commit
+    LoaderFlags                 DWORD     // Loader flags
+    NumberOfRvaAndSizes         DWORD     // Number of RVA and sizes
+    DataDirectory               [16]IMAGE_DATA_DIRECTORY // Data directory
+}
+
+// IMAGE_DATA_DIRECTORY structure
+type IMAGE_DATA_DIRECTORY struct {
+    VirtualAddress DWORD // RVA of the table
+    Size           DWORD // Size of the table
+}
+
+// IMAGE_NT_HEADERS structure
+type IMAGE_NT_HEADERS struct {
+    Signature      DWORD
+    FileHeader     IMAGE_FILE_HEADER
+    OptionalHeader IMAGE_OPTIONAL_HEADER
+}
+
+// IMAGE_SECTION_HEADER structure
+type IMAGE_SECTION_HEADER struct {
+    Name                 [8]BYTE // Section name
+    VirtualSize          DWORD   // Virtual size
+    VirtualAddress       DWORD   // Virtual address
+    SizeOfRawData        DWORD   // Size of raw data
+    PointerToRawData     DWORD   // File pointer to raw data
+    PointerToRelocations DWORD   // File pointer to relocations
+    PointerToLinenumbers DWORD   // File pointer to line numbers
+    NumberOfRelocations  WORD    // Number of relocations
+    NumberOfLinenumbers  WORD    // Number of line numbers
+    Characteristics      DWORD   // Characteristics
+}
+
+// IMAGE_RESOURCE_DIRECTORY structure
+type IMAGE_RESOURCE_DIRECTORY struct {
+    Characteristics    DWORD
+    TimeDateStamp      DWORD
+    MajorVersion       WORD
+    MinorVersion       WORD
+    NumberOfNamedEntries WORD
+    NumberOfIdEntries  WORD
+}
+
+// IMAGE_RESOURCE_DIRECTORY_ENTRY structure
+type IMAGE_RESOURCE_DIRECTORY_ENTRY struct {
+    Name           DWORD
+    OffsetToData   DWORD
+}
+
+// IMAGE_RESOURCE_DATA_ENTRY structure
+type IMAGE_RESOURCE_DATA_ENTRY struct {
+    OffsetToData DWORD
+    Size         DWORD
+    CodePage     DWORD
+    Reserved     DWORD
+}
+
+// VS_FIXEDFILEINFO structure
+type VS_FIXEDFILEINFO struct {
+    DwSignature        DWORD
+    DwStrucVersion     DWORD
+    DwFileVersionMS    DWORD
+    DwFileVersionLS    DWORD
+    DwProductVersionMS DWORD
+    DwProductVersionLS DWORD
+    DwFileFlagsMask    DWORD
+    DwFileFlags        DWORD
+    DwFileOS           DWORD
+    DwFileType         DWORD
+    DwFileSubtype      DWORD
+    DwFileDateMS       DWORD
+    DwFileDateLS       DWORD
+}
 
 // ELF64 Header structure
 type ELF64Header struct {
@@ -102,9 +246,12 @@ type PeFields struct {
     data_directory_offset uint32
     address_size uint32
     import_table_rva uint32
+    resource_table_rva uint32
     section_headers_offset uint32
     number_of_sections uint16
     import_table_file_offset uint32
+    resource_table_file_offset uint32
+    resource_table_end_file_offset uint32
 }
 
 type RichHeaders struct {
@@ -121,7 +268,7 @@ type RichHeaders struct {
 // The "main" function to check command line arguments, run the scrip and exit
 func main() {
     fmt.Println(`
-BypassHash  Copyright (C) 2022, 2024  Maurice Lambert
+BypassHash  Copyright (C) 2022, 2024, 2025  Maurice Lambert
 This program comes with ABSOLUTELY NO WARRANTY.
 This is free software, and you are welcome to redistribute it
 under certain conditions.
@@ -160,7 +307,12 @@ func random_PE_content (pe_header uint, data []byte) {
 
     pe_fields := parse_PE_content(pe_header, data)
     get_import_table_offset(data, &pe_fields)
-    random_import_table(data, &pe_fields)
+    if pe_fields.import_table_file_offset != 0 {
+        random_import_table(data, &pe_fields)
+    }
+    if pe_fields.resource_table_file_offset != 0 {
+        random_resource_section(data, &pe_fields)
+    }
     random_DOS_Stub(pe_header, data)
 }
 
@@ -184,6 +336,7 @@ func parse_PE_content (pe_header uint, data []byte) PeFields {
     }
 
     pe_fields.import_table_rva = binary.LittleEndian.Uint32(data[pe_fields.data_directory_offset + 8:])
+    pe_fields.resource_table_rva = binary.LittleEndian.Uint32(data[pe_fields.data_directory_offset + 16:])
     pe_fields.section_headers_offset = pe_fields.optional_header_offset + uint32(binary.LittleEndian.Uint16(data[pe_header + 20:]))
     pe_fields.number_of_sections = binary.LittleEndian.Uint16(data[pe_header + 6:])
 
@@ -201,10 +354,17 @@ func get_import_table_offset (data []byte, pe_fields *PeFields) {
 
         if pe_fields.import_table_rva >= virtual_address && pe_fields.import_table_rva < (virtual_address + size_of_raw_data) {
             pe_fields.import_table_file_offset = pointer_to_raw_data + (pe_fields.import_table_rva - virtual_address)
-        } 
+        } else if pe_fields.resource_table_rva >= virtual_address && pe_fields.resource_table_rva < (virtual_address + size_of_raw_data) {
+            pe_fields.resource_table_file_offset = pointer_to_raw_data + (pe_fields.resource_table_rva - virtual_address)
+            pe_fields.resource_table_end_file_offset = pe_fields.resource_table_file_offset + size_of_raw_data
+        }
 
         if (virtual_size < size_of_raw_data) {
-            for i, char := range get_random_bytes(uint64(size_of_raw_data - virtual_size)) {
+            char := byte(rand.Intn(256))
+            for char == data[pointer_to_raw_data + virtual_size] {
+                char = byte(rand.Intn(256))
+            }
+            for i := 0; i < int(size_of_raw_data - virtual_size); i += 1 {
                 data[pointer_to_raw_data + virtual_size + uint32(i)] = char
             }
         }
@@ -236,6 +396,213 @@ func random_import_table (data []byte, pe_fields *PeFields) {
 
         import_offset += 20
     }
+}
+
+// This function returns the parsed IMAGE_RESOURCE_DIRECTORY_ENTRY
+func get_resource_directory_entry (data []byte) (uint32, uint32, bool) {
+    offset := binary.LittleEndian.Uint32(data[4:8])
+    return binary.LittleEndian.Uint32(data[0:4]), offset & 0x7fffffff, offset & 0x80000000 != 0
+}
+
+// This function modify resource directories
+func random_resource (data []byte, data_resources []byte, parent_type uint32) {
+    for i, char := range get_random_bytes(uint64(4)) {
+        data[i] = char
+    }
+    write_random_timestamp(data[4:8])
+    for i, char := range get_random_bytes(uint64(2)) {
+        data[10 + i] = char
+    }
+
+    named_entries := uint32(binary.LittleEndian.Uint16(data[12:14]))
+    id_entries := uint32(binary.LittleEndian.Uint16(data[14:16]))
+    // entries_number := named_entries + id_entries
+    end_named_entries_offset := 16 + named_entries * 8
+    entries := data[16:end_named_entries_offset]
+
+    for i := uint32(0); i < named_entries; i += 1 {
+        entries = handle_resource_directory_entry(data_resources, entries, parent_type)
+    }
+
+    entries = data[end_named_entries_offset:end_named_entries_offset + id_entries * 8]
+    for i := uint32(0); i < id_entries; i += 1 {
+        entries = handle_resource_directory_entry(data_resources, entries, parent_type)
+    }
+}
+
+// This function modify the fixed file info
+func random_fixedfileinfo (fixedfileinfo []byte) {
+    for i, char := range get_random_bytes(uint64(16)) {
+        fixedfileinfo[8 + i] = char
+    }
+    for i, char := range get_random_bytes(uint64(8)) {
+        fixedfileinfo[44 + i] = char
+    }
+}
+
+// This function modify the string
+func random_string (data []byte, index uint) uint {
+    const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ "
+    string_size := binary.LittleEndian.Uint16(data[0:2])
+    string := data[:string_size]
+    string_value_size := binary.LittleEndian.Uint16(string[2:4])
+
+    offset := uint(6)
+    char := string[offset]
+    for char != byte(0) {
+        offset += 2
+        char = string[offset]
+    }
+
+    for char == byte(0) {
+        offset += 1
+        char = string[offset]
+    }
+
+    for i := uint16(0); i < string_value_size - 1; i += 1 {
+        string[i * 2] = charset[rand.Intn(53)]
+    }
+
+    return offset + index
+}
+
+var string_languages = [...]string{"0\x000\x000\x00B\x00", "0\x000\x000\x00C\x00", "0\x000\x000\x00D\x00", "0\x000\x000\x00E\x00", "0\x000\x000\x00F\x00", "0\x000\x001\x000\x00", "0\x000\x001\x001\x00", "0\x000\x001\x002\x00", "0\x000\x001\x003\x00", "0\x000\x001\x004\x00", "0\x000\x001\x005\x00", "0\x000\x001\x006\x00", "0\x000\x001\x007\x00", "0\x000\x001\x008\x00", "0\x000\x001\x009\x00", "0\x000\x001\x00A\x00", "0\x000\x001\x00B\x00", "0\x000\x001\x00C\x00", "0\x000\x001\x00D\x00", "0\x000\x001\x00E\x00", "0\x000\x001\x00F\x00", "0\x000\x002\x000\x00", "0\x000\x002\x001\x00", "0\x000\x002\x002\x00", "0\x000\x002\x003\x00", "0\x000\x002\x004\x00", "0\x000\x002\x005\x00", "0\x000\x002\x006\x00", "0\x000\x002\x007\x00", "0\x000\x002\x008\x00", "0\x000\x002\x009\x00", "0\x000\x002\x00A\x00", "0\x000\x002\x00B\x00", "0\x000\x002\x00C\x00", "0\x000\x002\x00D\x00", "0\x000\x002\x00E\x00", "0\x000\x002\x00F\x00", "0\x000\x003\x000\x00", "0\x000\x003\x001\x00", "0\x000\x003\x002\x00", "0\x000\x003\x003\x00", "0\x000\x003\x004\x00", "0\x000\x003\x005\x00", "0\x000\x003\x006\x00", "0\x000\x003\x007\x00", "0\x000\x003\x008\x00", "0\x000\x003\x009\x00", "0\x000\x003\x00A\x00", "0\x000\x003\x00B\x00", "0\x000\x003\x00C\x00", "0\x000\x003\x00D\x00", "0\x000\x003\x00E\x00", "0\x000\x003\x00F\x00", "0\x000\x004\x000\x00", "0\x000\x004\x001\x00", "0\x000\x004\x002\x00", "0\x000\x004\x003\x00", "0\x000\x004\x004\x00", "0\x000\x004\x005\x00", "0\x000\x004\x006\x00", "0\x000\x004\x007\x00", "0\x000\x004\x008\x00", "0\x000\x004\x009\x00", "0\x000\x004\x00A\x00", "0\x000\x004\x00B\x00", "0\x000\x004\x00C\x00", "0\x000\x004\x00D\x00", "0\x000\x004\x00E\x00", "0\x000\x004\x00F\x00", "0\x000\x005\x000\x00", "0\x000\x005\x001\x00", "0\x000\x005\x002\x00", "0\x000\x005\x003\x00", "0\x000\x005\x004\x00", "0\x000\x005\x005\x00", "0\x000\x005\x006\x00", "0\x000\x005\x007\x00", "0\x000\x005\x008\x00", "0\x000\x005\x009\x00", "0\x000\x005\x00A\x00", "0\x000\x005\x00B\x00", "0\x000\x005\x00C\x00", "0\x000\x005\x00D\x00", "0\x000\x005\x00E\x00", "0\x000\x005\x00F\x00", "0\x000\x006\x000\x00", "0\x000\x006\x001\x00", "0\x000\x006\x002\x00", "0\x000\x006\x003\x00", "0\x000\x006\x004\x00", "0\x000\x006\x005\x00", "0\x000\x006\x006\x00", "0\x000\x006\x007\x00", "0\x000\x006\x008\x00", "0\x000\x006\x009\x00", "0\x000\x006\x00A\x00", "0\x000\x006\x00B\x00", "0\x000\x006\x00C\x00", "0\x000\x006\x00D\x00", "0\x000\x006\x00E\x00", "0\x000\x006\x00F\x00", "0\x000\x007\x000\x00", "0\x000\x007\x001\x00", "0\x000\x007\x002\x00", "0\x000\x007\x003\x00", "0\x000\x007\x004\x00", "0\x000\x007\x005\x00", "0\x000\x007\x006\x00", "0\x000\x007\x007\x00", "0\x000\x007\x008\x00", "0\x000\x007\x009\x00", "0\x000\x007\x00A\x00", "0\x000\x007\x00B\x00", "0\x000\x007\x00C\x00", "0\x000\x007\x00D\x00", "0\x000\x007\x00E\x00", "0\x000\x007\x00F\x00", "0\x000\x008\x000\x00", "0\x000\x008\x001\x00", "0\x000\x008\x002\x00", "0\x000\x008\x003\x00", "0\x000\x008\x004\x00", "0\x000\x008\x005\x00", "0\x000\x008\x006\x00", "0\x000\x008\x007\x00", "0\x000\x008\x008\x00", "0\x000\x008\x009\x00", "0\x000\x008\x00A\x00", "0\x000\x008\x00B\x00", "0\x000\x008\x00C\x00", "0\x000\x008\x00D\x00", "0\x000\x008\x00E\x00", "0\x000\x008\x00F\x00", "0\x000\x009\x000\x00", "0\x000\x009\x001\x00", "0\x000\x009\x002\x00", "0\x000\x009\x003\x00", "0\x004\x000\x001\x00", "0\x004\x000\x002\x00", "0\x004\x000\x003\x00", "0\x004\x000\x004\x00", "0\x004\x000\x005\x00", "0\x004\x000\x006\x00", "0\x004\x000\x007\x00", "0\x004\x000\x008\x00", "0\x004\x000\x009\x00", "0\x004\x000\x00A\x00", "0\x004\x000\x00B\x00", "0\x004\x000\x00C\x00", "0\x004\x000\x00D\x00", "0\x004\x000\x00E\x00", "0\x004\x000\x00F\x00", "0\x004\x001\x000\x00", "0\x004\x001\x001\x00", "0\x004\x001\x002\x00", "0\x004\x001\x003\x00", "0\x004\x001\x004\x00", "0\x004\x001\x005\x00", "0\x004\x001\x006\x00", "0\x004\x001\x007\x00", "0\x004\x001\x008\x00", "0\x004\x001\x009\x00", "0\x004\x001\x00A\x00", "0\x004\x001\x00B\x00", "0\x004\x001\x00C\x00", "0\x004\x001\x00D\x00", "0\x004\x001\x00E\x00", "0\x004\x001\x00F\x00", "0\x004\x002\x000\x00", "0\x004\x002\x001\x00", "0\x004\x002\x002\x00", "0\x004\x002\x003\x00", "0\x004\x002\x004\x00", "0\x004\x002\x005\x00", "0\x004\x002\x006\x00", "0\x004\x002\x007\x00", "0\x004\x002\x008\x00", "0\x004\x002\x009\x00", "0\x004\x002\x00A\x00", "0\x004\x002\x00B\x00", "0\x004\x002\x00C\x00", "0\x004\x002\x00D\x00", "0\x004\x002\x00E\x00", "0\x004\x002\x00F\x00", "0\x004\x003\x000\x00", "0\x004\x003\x001\x00", "0\x004\x003\x002\x00", "0\x004\x003\x003\x00", "0\x004\x003\x004\x00", "0\x004\x003\x005\x00", "0\x004\x003\x006\x00", "0\x004\x003\x007\x00", "0\x004\x003\x008\x00", "0\x004\x003\x009\x00", "0\x004\x003\x00A\x00", "0\x004\x003\x00B\x00", "0\x004\x003\x00D\x00", "0\x004\x003\x00E\x00", "0\x004\x003\x00F\x00", "0\x004\x004\x000\x00", "0\x004\x004\x001\x00", "0\x004\x004\x002\x00", "0\x004\x004\x003\x00", "0\x004\x004\x004\x00", "0\x004\x004\x005\x00", "0\x004\x004\x006\x00", "0\x004\x004\x007\x00", "0\x004\x004\x008\x00", "0\x004\x004\x009\x00", "0\x004\x004\x00A\x00", "0\x004\x004\x00B\x00", "0\x004\x004\x00C\x00", "0\x004\x004\x00D\x00", "0\x004\x004\x00E\x00", "0\x004\x004\x00F\x00", "0\x004\x005\x000\x00", "0\x004\x005\x001\x00", "0\x004\x005\x002\x00", "0\x004\x005\x003\x00", "0\x004\x005\x004\x00", "0\x004\x005\x005\x00", "0\x004\x005\x006\x00", "0\x004\x005\x007\x00", "0\x004\x005\x008\x00", "0\x004\x005\x009\x00", "0\x004\x005\x00A\x00", "0\x004\x005\x00B\x00", "0\x004\x005\x00C\x00", "0\x004\x005\x00D\x00", "0\x004\x005\x00E\x00", "0\x004\x005\x00F\x00", "0\x004\x006\x000\x00", "0\x004\x006\x001\x00", "0\x004\x006\x002\x00", "0\x004\x006\x003\x00", "0\x004\x006\x004\x00", "0\x004\x006\x005\x00", "0\x004\x006\x006\x00", "0\x004\x006\x007\x00", "0\x004\x006\x008\x00", "0\x004\x006\x009\x00", "0\x004\x006\x00A\x00", "0\x004\x006\x00B\x00", "0\x004\x006\x00C\x00", "0\x004\x006\x00D\x00", "0\x004\x006\x00E\x00", "0\x004\x006\x00F\x00", "0\x004\x007\x000\x00", "0\x004\x007\x001\x00", "0\x004\x007\x002\x00", "0\x004\x007\x003\x00", "0\x004\x007\x004\x00", "0\x004\x007\x005\x00", "0\x004\x007\x006\x00", "0\x004\x007\x007\x00", "0\x004\x007\x008\x00", "0\x004\x007\x009\x00", "0\x004\x007\x00A\x00", "0\x004\x007\x00C\x00", "0\x004\x007\x00E\x00", "0\x004\x008\x000\x00", "0\x004\x008\x001\x00", "0\x004\x008\x002\x00", "0\x004\x008\x003\x00", "0\x004\x008\x004\x00", "0\x004\x008\x005\x00", "0\x004\x008\x006\x00", "0\x004\x008\x007\x00", "0\x004\x008\x008\x00", "0\x004\x008\x00C\x00", "0\x004\x008\x00D\x00", "0\x004\x008\x00E\x00", "0\x004\x008\x00F\x00", "0\x004\x009\x000\x00", "0\x004\x009\x001\x00", "0\x004\x009\x002\x00", "0\x004\x009\x003\x00", "0\x005\x000\x001\x00", "0\x005\x00F\x00E\x00", "0\x008\x000\x001\x00", "0\x008\x000\x003\x00", "0\x008\x000\x004\x00", "0\x008\x000\x007\x00", "0\x008\x000\x009\x00", "0\x008\x000\x00A\x00", "0\x008\x000\x00C\x00", "0\x008\x001\x000\x00", "0\x008\x001\x001\x00", "0\x008\x001\x003\x00", "0\x008\x001\x004\x00", "0\x008\x001\x006\x00", "0\x008\x001\x008\x00", "0\x008\x001\x009\x00", "0\x008\x001\x00A\x00", "0\x008\x001\x00D\x00", "0\x008\x002\x000\x00", "0\x008\x002\x007\x00", "0\x008\x002\x00C\x00", "0\x008\x002\x00E\x00", "0\x008\x003\x002\x00", "0\x008\x003\x00B\x00", "0\x008\x003\x00C\x00", "0\x008\x003\x00E\x00", "0\x008\x003\x00F\x00", "0\x008\x004\x003\x00", "0\x008\x004\x005\x00", "0\x008\x004\x006\x00", "0\x008\x004\x009\x00", "0\x008\x005\x000\x00", "0\x008\x005\x001\x00", "0\x008\x005\x009\x00", "0\x008\x005\x00D\x00", "0\x008\x005\x00F\x00", "0\x008\x006\x000\x00", "0\x008\x006\x001\x00", "0\x008\x006\x007\x00", "0\x008\x006\x00B\x00", "0\x008\x007\x003\x00", "0\x009\x00F\x00F\x00", "0\x00C\x000\x000\x00", "0\x00C\x000\x001\x00", "0\x00C\x000\x004\x00", "0\x00C\x000\x007\x00", "0\x00C\x000\x009\x00", "0\x00C\x000\x00A\x00", "0\x00C\x000\x00C\x00", "0\x00C\x001\x00A\x00", "0\x00C\x003\x00B\x00", "0\x00C\x005\x000\x00", "0\x00C\x005\x001\x00", "0\x00C\x005\x00F\x00", "0\x00C\x006\x00b\x00", "1\x000\x000\x000\x00", "1\x000\x000\x001\x00", "1\x000\x000\x004\x00", "1\x000\x000\x007\x00", "1\x000\x000\x009\x00", "1\x000\x000\x00A\x00", "1\x000\x000\x00C\x00", "1\x000\x001\x00A\x00", "1\x000\x003\x00B\x00", "1\x000\x005\x00F\x00", "1\x004\x000\x001\x00", "1\x004\x000\x004\x00", "1\x004\x000\x007\x00", "1\x004\x000\x009\x00", "1\x004\x000\x00A\x00", "1\x004\x000\x00C\x00", "1\x004\x001\x00A\x00", "1\x004\x003\x00B\x00", "1\x008\x000\x001\x00", "1\x008\x000\x009\x00", "1\x008\x000\x00A\x00", "1\x008\x000\x00C\x00", "1\x008\x001\x00A\x00", "1\x008\x003\x00B\x00", "1\x00C\x000\x001\x00", "1\x00C\x000\x009\x00", "1\x00C\x000\x00A\x00", "1\x00C\x000\x00C\x00", "1\x00C\x001\x00A\x00", "1\x00C\x003\x00B\x00", "2\x000\x000\x001\x00", "2\x000\x000\x008\x00", "2\x000\x000\x009\x00", "2\x000\x000\x00A\x00", "2\x000\x000\x00C\x00", "2\x000\x001\x00A\x00", "2\x000\x003\x00B\x00", "2\x004\x000\x001\x00", "2\x004\x000\x009\x00", "2\x004\x000\x00A\x00", "2\x004\x000\x00C\x00", "2\x004\x001\x00A\x00", "2\x004\x003\x00B\x00", "2\x008\x000\x001\x00", "2\x008\x000\x009\x00", "2\x008\x000\x00A\x00", "2\x008\x000\x00C\x00", "2\x008\x001\x00A\x00", "2\x00C\x000\x001\x00", "2\x00C\x000\x009\x00", "2\x00C\x000\x00A\x00", "2\x00C\x000\x00C\x00", "2\x00C\x001\x00A\x00", "3\x000\x000\x000\x00", "3\x000\x000\x001\x00", "3\x000\x000\x009\x00", "3\x000\x000\x00A\x00", "3\x000\x000\x00C\x00", "3\x000\x001\x00A\x00", "3\x004\x000\x000\x00", "3\x004\x000\x001\x00", "3\x004\x000\x009\x00", "3\x004\x000\x00A\x00", "3\x004\x000\x00C\x00", "3\x008\x000\x000\x00", "3\x008\x000\x001\x00", "3\x008\x000\x009\x00", "3\x008\x000\x00A\x00", "3\x008\x000\x00C\x00", "3\x00C\x000\x000\x00", "3\x00C\x000\x001\x00", "3\x00C\x000\x009\x00", "3\x00C\x000\x00A\x00", "3\x00C\x000\x00C\x00", "4\x000\x000\x000\x00", "4\x000\x000\x001\x00", "4\x000\x000\x009\x00", "4\x000\x000\x00A\x00", "4\x004\x000\x000\x00", "4\x004\x000\x001\x00", "4\x004\x000\x009\x00", "4\x004\x000\x00A\x00", "4\x008\x000\x000\x00", "4\x008\x000\x001\x00", "4\x008\x000\x009\x00", "4\x008\x000\x00A\x00", "4\x00C\x000\x000\x00", "4\x00C\x000\x009\x00", "4\x00C\x000\x00A\x00", "5\x000\x000\x009\x00", "5\x000\x000\x00A\x00", "5\x004\x000\x009\x00", "5\x004\x000\x00A\x00", "5\x008\x000\x009\x00", "5\x008\x000\x00A\x00", "5\x00C\x000\x009\x00", "5\x00C\x000\x00A\x00", "6\x000\x000\x009\x00", "6\x004\x000\x009\x00", "6\x004\x001\x00A\x00", "6\x008\x001\x00A\x00", "6\x00C\x001\x00A\x00", "7\x000\x001\x00A\x00", "7\x000\x003\x00B\x00", "7\x004\x002\x00C\x00", "7\x004\x003\x00B\x00", "7\x008\x000\x004\x00", "7\x008\x001\x004\x00", "7\x008\x001\x00A\x00", "7\x008\x002\x00C\x00", "7\x008\x003\x00B\x00", "7\x008\x003\x00F\x00", "7\x008\x004\x003\x00", "7\x008\x005\x000\x00", "7\x008\x005\x00D\x00", "7\x008\x005\x00F\x00", "7\x00C\x000\x004\x00", "7\x00C\x001\x004\x00", "7\x00C\x001\x00A\x00", "7\x00C\x002\x008\x00", "7\x00C\x002\x00E\x00", "7\x00C\x003\x00B\x00", "7\x00C\x003\x00F\x00", "7\x00C\x004\x003\x00", "7\x00C\x004\x006\x00", "7\x00C\x005\x000\x00", "7\x00C\x005\x009\x00", "7\x00C\x005\x00C\x00", "7\x00C\x005\x00D\x00", "7\x00C\x005\x00F\x00", "7\x00C\x006\x007\x00", "7\x00C\x006\x008\x00", "7\x00C\x009\x002\x00", "F\x002\x00E\x00E\x00", "E\x004\x000\x00C\x00"}
+var string_sublanguages = [...]string{"0\x004\x00B\x000\x00", "0\x000\x000\x000\x00", "0\x003\x00A\x004\x00", "0\x003\x00B\x005\x00", "0\x003\x00B\x006\x00", "0\x004\x00E\x002\x00", "0\x004\x00E\x003\x00", "0\x004\x00E\x004\x00", "0\x004\x00E\x005\x00", "0\x004\x00E\x006\x00", "0\x004\x00E\x007\x00", "0\x004\x00E\x008\x00"}
+var int_languages = [...]uint16{1025, 1045, 1026, 1046, 1027, 1047, 1028, 1048, 1029, 1049, 1030, 1050, 1031, 1051, 1032, 1052, 1033, 1053, 1034, 1054, 1035, 1055, 1036, 1056, 1037, 1057, 1038, 2052, 1039, 2055, 1040, 2057, 1041, 2058, 1042, 2060, 1043, 3084, 1044, 4108, 2064, 2070, 2067, 2074, 2068}
+var int_sublanguages = [...]uint16{0, 932, 949, 950, 1200, 1250, 1251, 1252, 1253, 1254, 1255, 1256}
+
+// This function modify the string table
+func random_stringtable (data []byte, size uint, index uint) uint {
+    table_size := binary.LittleEndian.Uint16(data[0:2])
+    string_table := data[:table_size]
+    for i, char := range get_random_bytes(uint64(2)) {
+        string_table[2 + i] = char
+    }
+
+    for i, char := range string_languages[rand.Intn(len(string_languages))] + string_sublanguages[rand.Intn(len(string_sublanguages))] {
+        string_table[6 + i] = byte(char)
+    }
+
+    index += 22
+    char := data[index]
+    for char == byte(0) {
+        index += 1
+        char = data[index]
+    }
+
+    for (index + 10) < size {
+        index = random_string(data[index:], index)
+    }
+
+    return index
+}
+
+// This function modify the string file info
+func random_stringfileinfo (data []byte) uint {
+    size := uint(binary.LittleEndian.Uint16(data[0:2]))
+    string_file_info := data[:size]
+    for i, char := range get_random_bytes(uint64(2)) {
+        string_file_info[2 + i] = char
+    }
+
+    index := uint(36)
+    char := string_file_info[index]
+    for char == byte(0) {
+        index += 1
+        char = string_file_info[index]
+    }
+
+    for (index + 10) < size {
+        index = random_stringtable(string_file_info[index:], size, index)
+    }
+
+    return index
+}
+
+// This function modify var
+func random_var (data []byte) {
+    size := uint(binary.LittleEndian.Uint16(data[0:2]))
+    var_object := data[:size]
+
+    index := 32
+    char := var_object[index]
+    for char == byte(0) {
+        index += 1
+        char = var_object[index]
+    }
+
+    random := make([]byte, 4)
+    binary.LittleEndian.PutUint16(random, int_languages[rand.Intn(len(int_languages))])
+    binary.LittleEndian.PutUint16(random[2:], int_sublanguages[rand.Intn(len(int_sublanguages))])
+
+    for i, char := range random {
+        var_object[index + i] = char
+    }
+}
+
+// This function modify var file info
+func random_varfileinfo (data []byte) {
+    size := uint(binary.LittleEndian.Uint16(data[0:2]))
+    var_file_info := data[:size]
+    for i, char := range get_random_bytes(uint64(2)) {
+        var_file_info[2 + i] = char
+    }
+
+    index := 30
+    char := var_file_info[index]
+    for char == byte(0) {
+        index += 1
+        char = var_file_info[index]
+    }
+
+    random_var(var_file_info[index:])
+}
+
+// This function modify the version info
+func random_versioninfo (versioninfo []byte) {
+    size := uint(binary.LittleEndian.Uint16(versioninfo[2:4]))
+    index := uint(36)
+    char := versioninfo[index]
+    for char == byte(0) {
+        index += 1
+        char = versioninfo[index]
+    }
+
+    random_fixedfileinfo(versioninfo[index: index + size])
+
+    index = index + size
+    char = versioninfo[index]
+    for char == byte(0) {
+        index += 1
+        char = versioninfo[index]
+    }
+
+    index = random_stringfileinfo(versioninfo[index:])
+    random_varfileinfo(versioninfo[index:])
+}
+
+// This function parses recursively resources directories
+func handle_resource_directory_entry (data []byte, entries []byte, parent_type uint32) []byte {
+    name, offset, is_directory := get_resource_directory_entry(entries[0:8])
+    if (is_directory) {
+        random_resource(data[offset:], data, name)
+    } else {
+        for i, char := range get_random_bytes(uint64(4)) {
+            data[offset + uint32(12 + i)] = char
+        }
+        if parent_type == 16 {
+            offset = binary.LittleEndian.Uint32(data[offset:offset + 4])
+            size := binary.LittleEndian.Uint32(data[offset + 4:offset + 8])
+            random_versioninfo(data[offset:offset + size])
+        }
+    }
+    return entries[8:]
+}
+
+// This function modify resource section
+func random_resource_section (data []byte, pe_fields *PeFields) {
+    data_resources := data[pe_fields.resource_table_file_offset:pe_fields.resource_table_end_file_offset]
+    random_resource(data_resources, data_resources, uint32(0))
 }
 
 // This function modify the DOS Stub
@@ -619,7 +986,11 @@ func random_section_padding (data []byte, section_headers []ELF64SectionHeader) 
         last_byte := section.Offset + section.Size
         next_section := section_headers[i + 1]
         if last_byte < next_section.Offset {
-            for i, char := range get_random_bytes(next_section.Offset - last_byte) {
+            char := byte(rand.Intn(256))
+            for char == data[last_byte] {
+                char = byte(rand.Intn(256))
+            }
+            for i := uint64(0); i < (next_section.Offset - last_byte); i += 1 {
                 data[last_byte + uint64(i)] = char
             }   
         }
@@ -801,6 +1172,19 @@ func random_padding (magic uint, data []byte) {
     }
 }
 
+// This generates a random timestamp
+func write_random_timestamp (data []byte) {
+    max := time.Now().Unix()
+    sec := rand.Uint32() % uint32(max)
+    bytes_timestamp := make([]byte, 4)
+
+    binary.LittleEndian.PutUint32(bytes_timestamp, sec)
+    
+    for i := uint(0); i < 4; i += 1 {
+        data[i] = bytes_timestamp[i]
+    }
+}
+
 // This function modify the compiled date time (available only for PE format)
 func random_compiled_datetime (pe_header uint, data []byte) {
     if pe_header == 0 {
@@ -808,15 +1192,7 @@ func random_compiled_datetime (pe_header uint, data []byte) {
         return
     }
 
-    max := time.Now().Unix()
-    sec := rand.Uint32() % uint32(max)
-    bytes_timestamp := make([]byte, 4)
-
-    binary.LittleEndian.PutUint32(bytes_timestamp, sec)
-
-    for i := uint(0); i < 4; i += 1 {
-        data[pe_header + 8 + i] = bytes_timestamp[i]
-    }
+    write_random_timestamp(data[pe_header + 8: pe_header + 12])
 }
 
 // This function check the file format (ELF or MZ-PE)
